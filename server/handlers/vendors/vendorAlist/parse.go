@@ -1,13 +1,12 @@
 package vendorAlist
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	json "github.com/json-iterator/go"
 	"github.com/synctv-org/synctv/internal/db"
-	dbModel "github.com/synctv-org/synctv/internal/model"
 	"github.com/synctv-org/synctv/internal/op"
 	"github.com/synctv-org/synctv/internal/vendor"
 	"github.com/synctv-org/synctv/server/model"
@@ -22,7 +21,7 @@ type ListReq struct {
 
 func (r *ListReq) Validate() error {
 	if r.Path == "" {
-		r.Password = "/"
+		r.Path = "/"
 	}
 	return nil
 }
@@ -40,21 +39,24 @@ func List(ctx *gin.Context) {
 		return
 	}
 
-	v, err := db.FirstOrCreateVendorByUserIDAndVendor(user.ID, dbModel.StreamingVendorAlist)
+	var cli = vendor.AlistClient(ctx.Query("backend"))
+	aucd, err := user.AlistCache().Get(ctx, ctx.Query("backend"))
 	if err != nil {
+		if errors.Is(err, db.ErrNotFound("vendor")) {
+			ctx.JSON(http.StatusOK, model.NewApiDataResp(&AlistMeResp{
+				IsLogin: false,
+			}))
+			return
+		}
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, model.NewApiErrorResp(err))
 		return
 	}
 
-	fmt.Printf("v.Authorization: %v\n", v.Authorization)
-
-	var cli = vendor.AlistClient(ctx.Query("backend"))
-
 	resp, err := cli.FsList(ctx, &alist.FsListReq{
-		Token:    v.Authorization,
+		Token:    aucd.Token,
 		Password: req.Password,
 		Path:     req.Path,
-		Host:     v.Host,
+		Host:     aucd.Host,
 		Refresh:  req.Refresh,
 	})
 	if err != nil {

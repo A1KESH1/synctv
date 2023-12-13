@@ -26,48 +26,85 @@ func (m *Movie) BeforeCreate(tx *gorm.DB) error {
 }
 
 type BaseMovie struct {
-	Url        string            `json:"url"`
-	Name       string            `gorm:"not null" json:"name"`
-	Live       bool              `json:"live"`
-	Proxy      bool              `json:"proxy"`
-	RtmpSource bool              `json:"rtmpSource"`
-	Type       string            `json:"type"`
-	Headers    map[string]string `gorm:"serializer:fastjson" json:"headers"`
-	VendorInfo VendorInfo        `gorm:"embedded;embeddedPrefix:vendor_info_" json:"vendorInfo,omitempty"`
+	Url        string               `json:"url"`
+	Name       string               `gorm:"not null" json:"name"`
+	Live       bool                 `json:"live"`
+	Proxy      bool                 `json:"proxy"`
+	RtmpSource bool                 `json:"rtmpSource"`
+	Type       string               `json:"type"`
+	Headers    map[string]string    `gorm:"serializer:fastjson" json:"headers"`
+	Subtitles  map[string]*Subtitle `gorm:"serializer:fastjson" json:"subtitles"`
+	VendorInfo VendorInfo           `gorm:"embedded;embeddedPrefix:vendor_info_" json:"vendorInfo,omitempty"`
 }
+
+type Subtitle struct {
+	URL  string `json:"url"`
+	Type string `json:"type"`
+}
+
+type VendorName = string
+
+const (
+	VendorBilibili VendorName = "bilibili"
+	VendorAlist    VendorName = "alist"
+)
 
 type VendorInfo struct {
-	Vendor   StreamingVendor     `json:"vendor"`
-	Backend  string              `json:"backend"`
-	Shared   bool                `gorm:"not null;default:false" json:"shared"`
-	Bilibili *BilibiliVendorInfo `gorm:"embedded;embeddedPrefix:bilibili_" json:"bilibili,omitempty"`
-	Alist    *AlistVendorInfo    `gorm:"embedded;embeddedPrefix:alist_" json:"alist,omitempty"`
+	Vendor   VendorName             `json:"vendor"`
+	Backend  string                 `json:"backend"`
+	Shared   bool                   `gorm:"not null;default:false" json:"shared"`
+	Bilibili *BilibiliStreamingInfo `gorm:"embedded;embeddedPrefix:bilibili_" json:"bilibili,omitempty"`
+	Alist    *AlistStreamingInfo    `gorm:"embedded;embeddedPrefix:alist_" json:"alist,omitempty"`
 }
 
-type BilibiliVendorInfo struct {
+type BilibiliStreamingInfo struct {
 	Bvid    string `json:"bvid,omitempty"`
 	Cid     uint64 `json:"cid,omitempty"`
 	Epid    uint64 `json:"epid,omitempty"`
 	Quality uint64 `json:"quality,omitempty"`
 }
 
-func (b *BilibiliVendorInfo) Validate() error {
-	if b.Bvid == "" && b.Epid == 0 {
-		return fmt.Errorf("bvid and epid are empty")
-	}
-
-	if b.Bvid != "" && b.Epid != 0 {
-		return fmt.Errorf("bvid and epid can't be set at the same time")
-	}
-
-	if b.Bvid != "" && b.Cid == 0 {
-		return fmt.Errorf("cid is empty")
+func (b *BilibiliStreamingInfo) Validate() error {
+	switch {
+	// 先判断epid是否为0来确定是否是pgc
+	case b.Epid != 0:
+		if b.Bvid == "" || b.Cid == 0 {
+			return fmt.Errorf("bvid or cid is empty")
+		}
+	case b.Bvid != "":
+		if b.Cid == 0 {
+			return fmt.Errorf("cid is empty")
+		}
+	default:
+		return fmt.Errorf("bvid or epid is empty")
 	}
 
 	return nil
 }
 
-type AlistVendorInfo struct {
+type AlistStreamingInfo struct {
 	Path     string `json:"path,omitempty"`
 	Password string `json:"password,omitempty"`
+}
+
+func (a *AlistStreamingInfo) BeforeSave(tx *gorm.DB) error {
+	if a.Password != "" {
+		s, err := utils.CryptoToBase64([]byte(a.Password), utils.GenCryptoKey(a.Path))
+		if err != nil {
+			return err
+		}
+		a.Password = s
+	}
+	return nil
+}
+
+func (a *AlistStreamingInfo) AfterFind(tx *gorm.DB) error {
+	if a.Password != "" {
+		b, err := utils.DecryptoFromBase64(a.Password, utils.GenCryptoKey(a.Path))
+		if err != nil {
+			return err
+		}
+		a.Password = string(b)
+	}
+	return nil
 }

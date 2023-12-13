@@ -2,8 +2,8 @@ package settings
 
 import (
 	"errors"
-	"time"
 
+	"github.com/synctv-org/synctv/internal/db"
 	"github.com/synctv-org/synctv/internal/model"
 )
 
@@ -11,7 +11,8 @@ var (
 	DisableCreateRoom    = NewBoolSetting("disable_create_room", false, model.SettingGroupRoom)
 	RoomMustNeedPwd      = NewBoolSetting("room_must_need_pwd", false, model.SettingGroupRoom)
 	CreateRoomNeedReview = NewBoolSetting("create_room_need_review", false, model.SettingGroupRoom)
-	RoomTTL              = NewInt64Setting("room_ttl", int64(time.Hour*48), model.SettingGroupRoom)
+	// 48 hours
+	RoomTTL = NewInt64Setting("room_ttl", 48, model.SettingGroupRoom)
 )
 
 var (
@@ -36,7 +37,7 @@ var (
 )
 
 var (
-	DatabaseVersion = NewStringSetting("database_version", "0.0.1", model.SettingGroupDatabase, WithBeforeSetString(func(ss StringSetting, s string) error {
-		return errors.New("not support change database version")
+	DatabaseVersion = NewStringSetting("database_version", db.CurrentVersion, model.SettingGroupDatabase, WithBeforeSetString(func(ss StringSetting, s string) (string, error) {
+		return "", errors.New("not support change database version")
 	}))
 )

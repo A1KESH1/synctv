@@ -1,11 +1,13 @@
 package vendorAlist
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	json "github.com/json-iterator/go"
+	"github.com/synctv-org/synctv/internal/cache"
 	"github.com/synctv-org/synctv/internal/db"
 	dbModel "github.com/synctv-org/synctv/internal/model"
 	"github.com/synctv-org/synctv/internal/op"
@@ -48,8 +50,13 @@ func Login(ctx *gin.Context) {
 		})
 		if err != nil {
 			ctx.AbortWithStatusJSON(http.StatusBadRequest, model.NewApiErrorResp(err))
+			return
 		}
-		_, err = db.CreateOrSaveVendorByUserIDAndVendor(user.ID, dbModel.StreamingVendorAlist, db.WithHost(req.Host), db.WithAuthorization(""))
+		_, err = user.AlistCache().Data().Refresh(ctx, func(ctx context.Context, args ...any) (*cache.AlistUserCacheData, error) {
+			return &cache.AlistUserCacheData{
+				Host: req.Host,
+			}, nil
+		})
 		if err != nil {
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, model.NewApiErrorResp(err))
 			return
@@ -65,11 +72,26 @@ func Login(ctx *gin.Context) {
 			return
 		}
 
-		_, err = db.CreateOrSaveVendorByUserIDAndVendor(user.ID, dbModel.StreamingVendorAlist, db.WithAuthorization(resp.Token), db.WithHost(req.Host))
+		_, err = user.AlistCache().Data().Refresh(ctx, func(ctx context.Context, args ...any) (*cache.AlistUserCacheData, error) {
+			return &cache.AlistUserCacheData{
+				Host:  req.Host,
+				Token: resp.Token,
+			}, nil
+		})
 		if err != nil {
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, model.NewApiErrorResp(err))
 			return
 		}
+	}
+
+	_, err := db.CreateOrSaveAlistVendor(user.ID, &dbModel.AlistVendor{
+		Host:     req.Host,
+		Username: req.Username,
+		Password: req.Password,
+	})
+	if err != nil {
+		ctx.AbortWithStatusJSON(http.StatusInternalServerError, model.NewApiErrorResp(err))
+		return
 	}
 
 	ctx.Status(http.StatusNoContent)

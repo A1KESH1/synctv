@@ -5,6 +5,7 @@ import (
 	"hash/crc32"
 	"sync/atomic"
 
+	"github.com/synctv-org/synctv/internal/cache"
 	"github.com/synctv-org/synctv/internal/db"
 	"github.com/synctv-org/synctv/internal/model"
 	"github.com/synctv-org/synctv/internal/provider"
@@ -15,7 +16,12 @@ import (
 
 type User struct {
 	model.User
-	version uint32
+	version    uint32
+	alistCache *cache.AlistUserCache
+}
+
+func (u *User) AlistCache() *cache.AlistUserCache {
+	return u.alistCache
 }
 
 func (u *User) Version() uint32 {
@@ -69,11 +75,11 @@ func (u *User) NewMovie(movie *model.BaseMovie) (*model.Movie, error) {
 		return nil, errors.New("movie is nil")
 	}
 	switch movie.VendorInfo.Vendor {
-	case model.StreamingVendorBilibili:
+	case model.VendorBilibili:
 		if movie.VendorInfo.Bilibili == nil {
 			return nil, errors.New("bilibili payload is nil")
 		}
-	case model.StreamingVendorAlist:
+	case model.VendorAlist:
 		if movie.VendorInfo.Alist == nil {
 			return nil, errors.New("alist payload is nil")
 		}
@@ -228,7 +234,7 @@ func (u *User) ClearMovies(room *Room) error {
 	return room.ClearMovies()
 }
 
-func (u *User) SetCurrentMovie(room *Room, movie *Movie, play bool) error {
+func (u *User) SetCurrentMovie(room *Room, movie *model.Movie, play bool) error {
 	if !u.HasRoomPermission(room, model.PermissionEditCurrent) {
 		return model.ErrNoPermission
 	}
@@ -241,7 +247,7 @@ func (u *User) SetCurrentMovieByID(room *Room, movieID string, play bool) error 
 	if err != nil {
 		return err
 	}
-	return u.SetCurrentMovie(room, m, play)
+	return u.SetCurrentMovie(room, &m.Movie, play)
 }
 
 func (u *User) BindProvider(p provider.OAuth2Provider, pid string) error {

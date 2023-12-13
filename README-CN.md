@@ -44,11 +44,16 @@ SyncTV 的同步观看功能确保所有观看视频的人都在同一点上。�
   - [x] 聊天
   - [x] 弹幕
 - [x] 代理
-  - [ ] 视频代理
-  - [ ] 直播代理
+  - [x] 视频代理
+  - [x] 直播代理
+- [x] 解析
+  - [x] 视频解析
+    - [x] Bilibili
+  - [ ] 直播解析
+
 ---
 
-# Demo
+# 演示站点
 https://demo.synctv.wiki
 
 ---
@@ -60,7 +65,7 @@ https://demo.synctv.wiki
 您可以使用该脚本来安装和运行 SyncTV。
 
 ```bash
-sudo -v ; curl https://raw.githubusercontent.com/synctv-org/synctv/main/script/install.sh | sudo bash -s -- -v latest
+sudo -v ; curl -fsSL https://raw.gitmirror.com/synctv-org/synctv/main/script/install.sh | sudo bash -s -- -v latest
 ```
 
 ## Docker
@@ -88,7 +93,8 @@ synctv server --data-dir ./
 # 文档
 https://synctv.wiki
 
----
+# 特别赞助商
+- [亚洲云](https://www.asiayun.com) 为演示站点提供服务器支持。
 
 # 贡献者
 感谢这些出色的人们：

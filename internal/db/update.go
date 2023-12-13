@@ -3,16 +3,19 @@ package db
 import (
 	log "github.com/sirupsen/logrus"
 	"github.com/synctv-org/synctv/internal/model"
+	"gorm.io/gorm"
 )
 
 type dbVersion struct {
 	NextVersion string
-	Upgrade     func() error
+	Upgrade     func(*gorm.DB) error
 }
+
+const CurrentVersion = "0.0.1"
 
 var dbVersions = map[string]dbVersion{
 	"0.0.1": {
-		NextVersion: "",
+		NextVersion: "0.0.2-dev",
 		Upgrade:     nil,
 	},
 }
@@ -22,7 +25,7 @@ func upgradeDatabase() error {
 		Name:  "database_version",
 		Type:  model.SettingTypeString,
 		Group: model.SettingGroupDatabase,
-		Value: "0.0.1",
+		Value: CurrentVersion,
 	}
 	err := FirstOrCreateSettingItemValue(&setting)
 	if err != nil {
@@ -41,7 +44,7 @@ func upgradeDatabase() error {
 		}
 		log.Infof("Upgrading database to version %s", currentVersion)
 		if version.Upgrade != nil {
-			err = version.Upgrade()
+			err = version.Upgrade(db)
 			if err != nil {
 				return err
 			}

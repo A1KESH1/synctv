@@ -21,7 +21,16 @@ var (
 func Init(d *gorm.DB, t conf.DatabaseType) error {
 	db = d
 	dbType = t
-	return AutoMigrate(new(model.Setting), new(model.User), new(model.UserProvider), new(model.Room), new(model.RoomUserRelation), new(model.StreamingVendorInfo), new(model.Movie))
+	return AutoMigrate(
+		new(model.Setting),
+		new(model.User),
+		new(model.UserProvider),
+		new(model.Room),
+		new(model.RoomUserRelation),
+		new(model.Movie),
+		new(model.BilibiliVendor),
+		new(model.AlistVendor),
+	)
 }
 
 func AutoMigrate(dst ...any) error {
@@ -286,9 +295,15 @@ func WhereRoomUserStatus(status model.RoomUserStatus) func(db *gorm.DB) *gorm.DB
 	}
 }
 
+type ErrNotFound string
+
+func (e ErrNotFound) Error() string {
+	return fmt.Sprintf("%s not found", string(e))
+}
+
 func HandleNotFound(err error, errMsg ...string) error {
 	if err != nil && errors.Is(err, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("%s not found", strings.Join(errMsg, " "))
+		return ErrNotFound(strings.Join(errMsg, " "))
 	}
 	return err
 }

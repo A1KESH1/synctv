@@ -44,8 +44,12 @@ The theater feature provides a chat and bullet chat function, allowing you to co
   - [x] Chat
   - [x] Bullet chat
 - [x] Proxy
-  - [ ] Videos proxy
-  - [ ] Live proxy
+  - [x] Videos proxy
+  - [x] Live proxy
+- [x] Parse
+  - [x] Parse video
+    - [x] Bilibili
+  - [ ] Parse live
 
 ---
 
@@ -62,7 +66,7 @@ You can download the latest binary from [release page](https://github.com/synctv
 You can use the script to install and run SyncTV.
 
 ```bash
-sudo -v ; curl https://raw.githubusercontent.com/synctv-org/synctv/main/script/install.sh | sudo bash -s -- -v latest
+sudo -v ; curl -fsSL https://raw.gitmirror.com/synctv-org/synctv/main/script/install.sh | sudo bash -s -- -v latest
 ```
 
 ## Docker
@@ -90,7 +94,8 @@ synctv server --data-dir ./
 # Documentation
 https://synctv.wiki
 
----
+# Special sponsors
+- [亚洲云](https://www.asiayun.com) supports the server for the demo site.
 
 # Contributors
 Thanks goes to these wonderful people:
