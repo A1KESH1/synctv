@@ -3,13 +3,11 @@ package model
 import (
 	"errors"
 	"fmt"
-	"regexp"
 
 	json "github.com/json-iterator/go"
-	"github.com/synctv-org/synctv/internal/op"
 
 	"github.com/gin-gonic/gin"
-	dbModel "github.com/synctv-org/synctv/internal/model"
+	"github.com/synctv-org/synctv/internal/model"
 )
 
 var (
@@ -19,17 +17,6 @@ var (
 
 	ErrPasswordTooLong        = errors.New("password too long")
 	ErrPasswordHasInvalidChar = errors.New("password has invalid char")
-
-	ErrEmptyUserId            = errors.New("empty user id")
-	ErrEmptyUsername          = errors.New("empty username")
-	ErrUsernameTooLong        = errors.New("username too long")
-	ErrUsernameHasInvalidChar = errors.New("username has invalid char")
-)
-
-var (
-	alnumReg         = regexp.MustCompile(`^[[:alnum:]]+$`)
-	alnumPrintReg    = regexp.MustCompile(`^[[:print:][:alnum:]]+$`)
-	alnumPrintHanReg = regexp.MustCompile(`^[[:print:][:alnum:]\p{Han}]+$`)
 )
 
 type FormatEmptyPasswordError string
@@ -39,9 +26,11 @@ func (f FormatEmptyPasswordError) Error() string {
 }
 
 type CreateRoomReq struct {
-	RoomName string               `json:"roomName"`
-	Password string               `json:"password"`
-	Setting  dbModel.RoomSettings `json:"setting"`
+	RoomName string `json:"roomName"`
+	Password string `json:"password"`
+	Settings struct {
+		Hidden bool `json:"hidden"`
+	} `json:"settings"`
 }
 
 func (c *CreateRoomReq) Decode(ctx *gin.Context) error {
@@ -68,7 +57,16 @@ func (c *CreateRoomReq) Validate() error {
 	return nil
 }
 
-type RoomListResp = op.RoomInfo
+type RoomListResp struct {
+	RoomId       string           `json:"roomId"`
+	RoomName     string           `json:"roomName"`
+	PeopleNum    int64            `json:"peopleNum"`
+	NeedPassword bool             `json:"needPassword"`
+	CreatorID    string           `json:"creatorId"`
+	Creator      string           `json:"creator"`
+	CreatedAt    int64            `json:"createdAt"`
+	Status       model.RoomStatus `json:"status"`
+}
 
 type LoginRoomReq struct {
 	RoomId   string `json:"roomId"`
@@ -124,7 +122,7 @@ func (r *RoomIDReq) Validate() error {
 	return nil
 }
 
-type SetRoomSettingReq dbModel.RoomSettings
+type SetRoomSettingReq map[string]any
 
 func (s *SetRoomSettingReq) Decode(ctx *gin.Context) error {
 	return json.NewDecoder(ctx.Request.Body).Decode(s)
@@ -132,14 +130,4 @@ func (s *SetRoomSettingReq) Decode(ctx *gin.Context) error {
 
 func (s *SetRoomSettingReq) Validate() error {
 	return nil
-}
-
-type RoomUsersResp struct {
-	UserID      string                     `json:"userId"`
-	Username    string                     `json:"username"`
-	Role        dbModel.Role               `json:"role"`
-	JoinAt      int64                      `json:"joinAt"`
-	RoomID      string                     `json:"roomId"`
-	Status      dbModel.RoomUserStatus     `json:"status"`
-	Permissions dbModel.RoomUserPermission `json:"permissions"`
 }

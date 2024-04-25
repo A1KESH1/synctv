@@ -15,6 +15,8 @@ type StringSetting interface {
 	Default() string
 	Parse(string) (string, error)
 	Stringify(string) string
+	SetBeforeInit(func(StringSetting, string) (string, error))
+	SetBeforeSet(func(StringSetting, string) (string, error))
 }
 
 var _ StringSetting = (*String)(nil)
@@ -26,9 +28,16 @@ type String struct {
 	value                 string
 	validator             func(string) error
 	beforeInit, beforeSet func(StringSetting, string) (string, error)
+	afterInit, afterSet   func(StringSetting, string)
 }
 
 type StringSettingOption func(*String)
+
+func WithInitPriorityString(priority int) StringSettingOption {
+	return func(s *String) {
+		s.SetInitPriority(priority)
+	}
+}
 
 func WithValidatorString(validator func(string) error) StringSettingOption {
 	return func(s *String) {
@@ -38,13 +47,25 @@ func WithValidatorString(validator func(string) error) StringSettingOption {
 
 func WithBeforeInitString(beforeInit func(StringSetting, string) (string, error)) StringSettingOption {
 	return func(s *String) {
-		s.beforeInit = beforeInit
+		s.SetBeforeInit(beforeInit)
 	}
 }
 
 func WithBeforeSetString(beforeSet func(StringSetting, string) (string, error)) StringSettingOption {
 	return func(s *String) {
-		s.beforeSet = beforeSet
+		s.SetBeforeSet(beforeSet)
+	}
+}
+
+func WithAfterInitString(afterInit func(StringSetting, string)) StringSettingOption {
+	return func(s *String) {
+		s.SetAfterInit(afterInit)
+	}
+}
+
+func WithAfterSetString(afterSet func(StringSetting, string)) StringSettingOption {
+	return func(s *String) {
+		s.SetAfterSet(afterSet)
 	}
 }
 
@@ -62,6 +83,26 @@ func newString(name string, value string, group model.SettingGroup, options ...S
 		option(s)
 	}
 	return s
+}
+
+func (s *String) SetInitPriority(priority int) {
+	s.initPriority = priority
+}
+
+func (s *String) SetBeforeInit(beforeInit func(StringSetting, string) (string, error)) {
+	s.beforeInit = beforeInit
+}
+
+func (s *String) SetBeforeSet(beforeSet func(StringSetting, string) (string, error)) {
+	s.beforeSet = beforeSet
+}
+
+func (s *String) SetAfterInit(afterInit func(StringSetting, string)) {
+	s.afterInit = afterInit
+}
+
+func (s *String) SetAfterSet(afterSet func(StringSetting, string)) {
+	s.afterSet = afterSet
 }
 
 func (s *String) Parse(value string) (string, error) {
@@ -89,6 +130,11 @@ func (s *String) Init(value string) error {
 	}
 
 	s.set(v)
+
+	if s.afterInit != nil {
+		s.afterInit(s, v)
+	}
+
 	return nil
 }
 
@@ -127,6 +173,11 @@ func (s *String) SetString(value string) error {
 	}
 
 	s.set(v)
+
+	if s.afterSet != nil {
+		s.afterSet(s, v)
+	}
+
 	return nil
 }
 
@@ -157,6 +208,11 @@ func (s *String) Set(v string) (err error) {
 	}
 
 	s.set(v)
+
+	if s.afterSet != nil {
+		s.afterSet(s, v)
+	}
+
 	return
 }
 
@@ -170,13 +226,37 @@ func (s *String) Interface() any {
 	return s.Get()
 }
 
-func NewStringSetting(k string, v string, g model.SettingGroup, options ...StringSettingOption) *String {
+func NewStringSetting(k string, v string, g model.SettingGroup, options ...StringSettingOption) StringSetting {
 	_, loaded := Settings[k]
 	if loaded {
 		panic(fmt.Sprintf("setting %s already exists", k))
 	}
+	return CoverStringSetting(k, v, g, options...)
+}
+
+func CoverStringSetting(k string, v string, g model.SettingGroup, options ...StringSettingOption) StringSetting {
 	s := newString(k, v, g, options...)
 	Settings[k] = s
-	GroupSettings[g] = append(GroupSettings[g], s)
+	if GroupSettings[g] == nil {
+		GroupSettings[g] = make(map[string]Setting)
+	}
+	GroupSettings[g][k] = s
 	return s
+}
+
+func LoadStringSetting(k string) (StringSetting, bool) {
+	s, ok := Settings[k]
+	if !ok {
+		return nil, false
+	}
+	ss, ok := s.(StringSetting)
+	return ss, ok
+}
+
+func LoadOrNewStringSetting(k string, v string, g model.SettingGroup, options ...StringSettingOption) StringSetting {
+	s, ok := LoadStringSetting(k)
+	if ok {
+		return s
+	}
+	return NewStringSetting(k, v, g, options...)
 }

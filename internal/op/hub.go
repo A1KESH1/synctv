@@ -107,9 +107,9 @@ func (h *Hub) ping() {
 		case <-ticker.C:
 			current = h.PeopleNum()
 			if current != pre {
-				if err := h.Broadcast(&ElementMessage{
-					Type:      pb.ElementMessageType_CHANGE_PEOPLE,
-					PeopleNum: current,
+				if err := h.Broadcast(&pb.ElementMessage{
+					Type:          pb.ElementMessageType_PEOPLE_CHANGED,
+					PeopleChanged: current,
 				}); err != nil {
 					continue
 				}
@@ -240,4 +240,38 @@ func (h *Hub) SendToUser(userID string, data Message) (err error) {
 		}
 	}
 	return
+}
+
+func (h *Hub) IsOnline(userID string) bool {
+	_, ok := h.clients.Load(userID)
+	return ok
+}
+
+func (h *Hub) OnlineCount(userID string) int {
+	c, ok := h.clients.Load(userID)
+	if !ok {
+		return 0
+	}
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	if len(c.m) == 0 {
+		h.clients.CompareAndDelete(userID, c)
+	}
+	return len(c.m)
+}
+
+func (h *Hub) KickUser(userID string) error {
+	if h.Closed() {
+		return ErrAlreadyClosed
+	}
+	cli, ok := h.clients.Load(userID)
+	if !ok {
+		return nil
+	}
+	cli.lock.RLock()
+	defer cli.lock.RUnlock()
+	for c := range cli.m {
+		c.Close()
+	}
+	return nil
 }

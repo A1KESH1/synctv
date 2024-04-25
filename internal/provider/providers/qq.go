@@ -8,6 +8,7 @@ import (
 
 	json "github.com/json-iterator/go"
 	"github.com/synctv-org/synctv/internal/provider"
+	"github.com/zijiren233/go-uhc"
 	"golang.org/x/oauth2"
 )
 
@@ -37,8 +38,8 @@ func (p *QQProvider) Provider() provider.OAuth2Provider {
 	return "qq"
 }
 
-func (p *QQProvider) NewAuthURL(state string) string {
-	return p.config.AuthCodeURL(state, oauth2.AccessTypeOnline)
+func (p *QQProvider) NewAuthURL(ctx context.Context, state string) (string, error) {
+	return p.config.AuthCodeURL(state, oauth2.AccessTypeOnline), nil
 }
 
 func (p *QQProvider) GetToken(ctx context.Context, code string) (*oauth2.Token, error) {
@@ -53,7 +54,7 @@ func (p *QQProvider) GetToken(ctx context.Context, code string) (*oauth2.Token, 
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := uhc.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +74,7 @@ func (p *QQProvider) RefreshToken(ctx context.Context, tk string) (*oauth2.Token
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := uhc.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -82,12 +83,16 @@ func (p *QQProvider) RefreshToken(ctx context.Context, tk string) (*oauth2.Token
 	return newTk, json.NewDecoder(resp.Body).Decode(newTk)
 }
 
-func (p *QQProvider) GetUserInfo(ctx context.Context, tk *oauth2.Token) (*provider.UserInfo, error) {
+func (p *QQProvider) GetUserInfo(ctx context.Context, code string) (*provider.UserInfo, error) {
+	tk, err := p.GetToken(ctx, code)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://graph.qq.com/oauth2.0/me?access_token=%s&fmt=json", tk.AccessToken), nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := uhc.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +106,7 @@ func (p *QQProvider) GetUserInfo(ctx context.Context, tk *oauth2.Token) (*provid
 	if err != nil {
 		return nil, err
 	}
-	resp2, err := http.DefaultClient.Do(req)
+	resp2, err := uhc.Do(req)
 	if err != nil {
 		return nil, err
 	}

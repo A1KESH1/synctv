@@ -16,6 +16,8 @@ type BoolSetting interface {
 	Default() bool
 	Parse(string) (bool, error)
 	Stringify(bool) string
+	SetBeforeInit(func(BoolSetting, bool) (bool, error))
+	SetBeforeSet(func(BoolSetting, bool) (bool, error))
 }
 
 var _ BoolSetting = (*Bool)(nil)
@@ -25,19 +27,38 @@ type Bool struct {
 	defaultValue          bool
 	value                 uint32
 	beforeInit, beforeSet func(BoolSetting, bool) (bool, error)
+	afterInit, afterSet   func(BoolSetting, bool)
 }
 
 type BoolSettingOption func(*Bool)
 
+func WithInitPriorityBool(priority int) BoolSettingOption {
+	return func(s *Bool) {
+		s.SetInitPriority(priority)
+	}
+}
+
 func WithBeforeInitBool(beforeInit func(BoolSetting, bool) (bool, error)) BoolSettingOption {
 	return func(s *Bool) {
-		s.beforeInit = beforeInit
+		s.SetBeforeInit(beforeInit)
 	}
 }
 
 func WithBeforeSetBool(beforeSet func(BoolSetting, bool) (bool, error)) BoolSettingOption {
 	return func(s *Bool) {
-		s.beforeSet = beforeSet
+		s.SetBeforeSet(beforeSet)
+	}
+}
+
+func WithAfterInitBool(afterInit func(BoolSetting, bool)) BoolSettingOption {
+	return func(s *Bool) {
+		s.SetAfterInit(afterInit)
+	}
+}
+
+func WithAfterSetBool(afterSet func(BoolSetting, bool)) BoolSettingOption {
+	return func(s *Bool) {
+		s.SetAfterSet(afterSet)
 	}
 }
 
@@ -55,6 +76,26 @@ func newBool(name string, value bool, group model.SettingGroup, options ...BoolS
 	}
 	b.set(value)
 	return b
+}
+
+func (b *Bool) SetInitPriority(priority int) {
+	b.initPriority = priority
+}
+
+func (b *Bool) SetBeforeInit(beforeInit func(BoolSetting, bool) (bool, error)) {
+	b.beforeInit = beforeInit
+}
+
+func (b *Bool) SetBeforeSet(beforeSet func(BoolSetting, bool) (bool, error)) {
+	b.beforeSet = beforeSet
+}
+
+func (b *Bool) SetAfterInit(afterInit func(BoolSetting, bool)) {
+	b.afterInit = afterInit
+}
+
+func (b *Bool) SetAfterSet(afterSet func(BoolSetting, bool)) {
+	b.afterSet = afterSet
 }
 
 func (b *Bool) set(value bool) {
@@ -83,6 +124,11 @@ func (b *Bool) Init(value string) error {
 	}
 
 	b.set(v)
+
+	if b.afterInit != nil {
+		b.afterInit(b, v)
+	}
+
 	return nil
 }
 
@@ -129,6 +175,11 @@ func (b *Bool) SetString(value string) error {
 	}
 
 	b.set(v)
+
+	if b.afterSet != nil {
+		b.afterSet(b, v)
+	}
+
 	return nil
 }
 
@@ -146,6 +197,11 @@ func (b *Bool) Set(v bool) (err error) {
 	}
 
 	b.set(v)
+
+	if b.afterSet != nil {
+		b.afterSet(b, v)
+	}
+
 	return
 }
 
@@ -158,8 +214,31 @@ func NewBoolSetting(k string, v bool, g model.SettingGroup, options ...BoolSetti
 	if loaded {
 		panic(fmt.Sprintf("setting %s already exists", k))
 	}
+	return CoverBoolSetting(k, v, g, options...)
+}
+
+func CoverBoolSetting(k string, v bool, g model.SettingGroup, options ...BoolSettingOption) BoolSetting {
 	b := newBool(k, v, g, options...)
 	Settings[k] = b
-	GroupSettings[g] = append(GroupSettings[g], b)
+	if GroupSettings[g] == nil {
+		GroupSettings[g] = make(map[string]Setting)
+	}
+	GroupSettings[g][k] = b
 	return b
+}
+
+func LoadBoolSetting(k string) (BoolSetting, bool) {
+	s, ok := Settings[k]
+	if !ok {
+		return nil, false
+	}
+	b, ok := s.(BoolSetting)
+	return b, ok
+}
+
+func LoadOrNewBoolSetting(k string, v bool, g model.SettingGroup, options ...BoolSettingOption) BoolSetting {
+	if s, ok := LoadBoolSetting(k); ok {
+		return s
+	}
+	return CoverBoolSetting(k, v, g, options...)
 }

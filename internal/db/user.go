@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -15,6 +16,12 @@ import (
 
 type CreateUserConfig func(u *model.User)
 
+func WithID(id string) CreateUserConfig {
+	return func(u *model.User) {
+		u.ID = id
+	}
+}
+
 func WithRole(role model.Role) CreateUserConfig {
 	return func(u *model.User) {
 		u.Role = role
@@ -23,7 +30,7 @@ func WithRole(role model.Role) CreateUserConfig {
 
 func WithAppendProvider(p provider.OAuth2Provider, puid string) CreateUserConfig {
 	return func(u *model.User) {
-		u.UserProviders = append(u.UserProviders, model.UserProvider{
+		u.UserProviders = append(u.UserProviders, &model.UserProvider{
 			Provider:       p,
 			ProviderUserID: puid,
 		})
@@ -32,20 +39,20 @@ func WithAppendProvider(p provider.OAuth2Provider, puid string) CreateUserConfig
 
 func WithSetProvider(p provider.OAuth2Provider, puid string) CreateUserConfig {
 	return func(u *model.User) {
-		u.UserProviders = []model.UserProvider{{
+		u.UserProviders = []*model.UserProvider{{
 			Provider:       p,
 			ProviderUserID: puid,
 		}}
 	}
 }
 
-func WithAppendProviders(providers []model.UserProvider) CreateUserConfig {
+func WithAppendProviders(providers []*model.UserProvider) CreateUserConfig {
 	return func(u *model.User) {
 		u.UserProviders = append(u.UserProviders, providers...)
 	}
 }
 
-func WithSetProviders(providers []model.UserProvider) CreateUserConfig {
+func WithSetProviders(providers []*model.UserProvider) CreateUserConfig {
 	return func(u *model.User) {
 		u.UserProviders = providers
 	}
@@ -54,6 +61,21 @@ func WithSetProviders(providers []model.UserProvider) CreateUserConfig {
 func WithRegisteredByProvider(b bool) CreateUserConfig {
 	return func(u *model.User) {
 		u.RegisteredByProvider = b
+	}
+}
+
+func WithEmail(email string) CreateUserConfig {
+	return func(u *model.User) {
+		u.Email = sql.NullString{
+			String: email,
+			Valid:  true,
+		}
+	}
+}
+
+func WithRegisteredByEmail(b bool) CreateUserConfig {
+	return func(u *model.User) {
+		u.RegisteredByEmail = b
 	}
 }
 
@@ -128,8 +150,10 @@ func CreateOrLoadUserWithHashedPassword(username string, hashedPassword []byte, 
 
 // 只有当provider和puid没有找到对应的user时才会创建
 func CreateOrLoadUserWithProvider(username, password string, p provider.OAuth2Provider, puid string, conf ...CreateUserConfig) (*model.User, error) {
+	if puid == "" {
+		return nil, errors.New("provider user id cannot be empty")
+	}
 	var user model.User
-
 	if err := db.Where("id = (?)", db.Table("user_providers").Where("provider = ? AND provider_user_id = ?", p, puid).Select("user_id")).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return CreateUser(username, password, append(conf, WithSetProvider(p, puid), WithRegisteredByProvider(true))...)
@@ -141,9 +165,37 @@ func CreateOrLoadUserWithProvider(username, password string, p provider.OAuth2Pr
 	}
 }
 
+func CreateOrLoadUserWithEmail(username, password, email string, conf ...CreateUserConfig) (*model.User, error) {
+	if email == "" {
+		return nil, errors.New("email cannot be empty")
+	}
+	var user model.User
+	if err := db.Where("email = ?", email).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return CreateUser(username, password, append(conf, WithEmail(email), WithRegisteredByEmail(true))...)
+		} else {
+			return nil, err
+		}
+	}
+	return &user, nil
+}
+
+func CreateUserWithEmail(username, password, email string, conf ...CreateUserConfig) (*model.User, error) {
+	if email == "" {
+		return nil, errors.New("email cannot be empty")
+	}
+	return CreateUser(username, password, append(conf, WithEmail(email), WithRegisteredByEmail(true))...)
+}
+
 func GetUserByProvider(p provider.OAuth2Provider, puid string) (*model.User, error) {
 	var user model.User
 	err := db.Where("id = (?)", db.Table("user_providers").Where("provider = ? AND provider_user_id = ?", p, puid).Select("user_id")).First(&user).Error
+	return &user, HandleNotFound(err, "user")
+}
+
+func GetUserByEmail(email string) (*model.User, error) {
+	var user model.User
+	err := db.Where("email = ?", email).First(&user).Error
 	return &user, HandleNotFound(err, "user")
 }
 
@@ -194,22 +246,22 @@ func GetUserByUsername(username string) (*model.User, error) {
 	return u, HandleNotFound(err, "user")
 }
 
-func GetUserByUsernameLike(username string, scopes ...func(*gorm.DB) *gorm.DB) []*model.User {
+func GetUserByUsernameLike(username string, scopes ...func(*gorm.DB) *gorm.DB) ([]*model.User, error) {
 	var users []*model.User
-	db.Where(`username LIKE ?`, fmt.Sprintf("%%%s%%", username)).Scopes(scopes...).Find(&users)
-	return users
+	err := db.Where(`username LIKE ?`, fmt.Sprintf("%%%s%%", username)).Scopes(scopes...).Find(&users).Error
+	return users, err
 }
 
-func GerUsersIDByUsernameLike(username string, scopes ...func(*gorm.DB) *gorm.DB) []string {
+func GerUsersIDByUsernameLike(username string, scopes ...func(*gorm.DB) *gorm.DB) ([]string, error) {
 	var ids []string
-	db.Model(&model.User{}).Where(`username LIKE ?`, fmt.Sprintf("%%%s%%", username)).Scopes(scopes...).Pluck("id", &ids)
-	return ids
+	err := db.Model(&model.User{}).Where(`username LIKE ?`, fmt.Sprintf("%%%s%%", username)).Scopes(scopes...).Pluck("id", &ids).Error
+	return ids, err
 }
 
-func GerUsersIDByIDLike(id string, scopes ...func(*gorm.DB) *gorm.DB) []string {
+func GerUsersIDByIDLike(id string, scopes ...func(*gorm.DB) *gorm.DB) ([]string, error) {
 	var ids []string
-	db.Model(&model.User{}).Where(`id LIKE ?`, utils.LIKE(id)).Scopes(scopes...).Pluck("id", &ids)
-	return ids
+	err := db.Model(&model.User{}).Where(`id LIKE ?`, utils.LIKE(id)).Scopes(scopes...).Pluck("id", &ids).Error
+	return ids, err
 }
 
 func GetUserByIDOrUsernameLike(idOrUsername string, scopes ...func(*gorm.DB) *gorm.DB) ([]*model.User, error) {
@@ -254,15 +306,16 @@ func UnbanUserByID(userID string) error {
 }
 
 func DeleteUserByID(userID string) error {
-	err := db.Unscoped().Where("id = ?", userID).Delete(&model.User{}).Error
+	err := db.Unscoped().Select(clause.Associations).Delete(&model.User{ID: userID}).Error
 	return HandleNotFound(err, "user")
 }
 
 func LoadAndDeleteUserByID(userID string, columns ...clause.Column) (*model.User, error) {
-	u := &model.User{}
+	u := &model.User{ID: userID}
 	if db.Unscoped().
 		Clauses(clause.Returning{Columns: columns}).
-		Delete(u, userID).
+		Select(clause.Associations).
+		Delete(u).
 		RowsAffected == 0 {
 		return u, errors.New("user not found")
 	}
@@ -270,7 +323,7 @@ func LoadAndDeleteUserByID(userID string, columns ...clause.Column) (*model.User
 }
 
 func SaveUser(u *model.User) error {
-	return db.Save(u).Error
+	return db.Omit("created_at").Save(u).Error
 }
 
 func AddAdmin(u *model.User) error {
@@ -289,10 +342,10 @@ func RemoveAdmin(u *model.User) error {
 	return SaveUser(u)
 }
 
-func GetAdmins() []*model.User {
+func GetAdmins() ([]*model.User, error) {
 	var users []*model.User
-	db.Where("role == ?", model.RoleAdmin).Find(&users)
-	return users
+	err := db.Where("role == ?", model.RoleAdmin).Find(&users).Error
+	return users, err
 }
 
 func AddAdminByID(userID string) error {
@@ -337,13 +390,18 @@ func GetRoots() []*model.User {
 	return users
 }
 
-func SetRole(u *model.User, role model.Role) error {
-	u.Role = role
-	return SaveUser(u)
+func SetAdminRoleByID(userID string) error {
+	err := db.Model(&model.User{}).Where("id = ?", userID).Update("role", model.RoleAdmin).Error
+	return HandleNotFound(err, "user")
 }
 
-func SetRoleByID(userID string, role model.Role) error {
-	err := db.Model(&model.User{}).Where("id = ?", userID).Update("role", role).Error
+func SetRootRoleByID(userID string) error {
+	err := db.Model(&model.User{}).Where("id = ?", userID).Update("role", model.RoleRoot).Error
+	return HandleNotFound(err, "user")
+}
+
+func SetUserRoleByID(userID string) error {
+	err := db.Model(&model.User{}).Where("id = ?", userID).Update("role", model.RoleUser).Error
 	return HandleNotFound(err, "user")
 }
 
@@ -352,19 +410,43 @@ func SetUsernameByID(userID string, username string) error {
 	return HandleNotFound(err, "user")
 }
 
-func GetAllUserCount(scopes ...func(*gorm.DB) *gorm.DB) int64 {
+func GetAllUserCount(scopes ...func(*gorm.DB) *gorm.DB) (int64, error) {
 	var count int64
-	db.Model(&model.User{}).Scopes(scopes...).Count(&count)
-	return count
+	err := db.Model(&model.User{}).Scopes(scopes...).Count(&count).Error
+	return count, err
 }
 
-func GetAllUsers(scopes ...func(*gorm.DB) *gorm.DB) []*model.User {
+func GetAllUsers(scopes ...func(*gorm.DB) *gorm.DB) ([]*model.User, error) {
 	var users []*model.User
-	db.Scopes(scopes...).Find(&users)
-	return users
+	err := db.Scopes(scopes...).Find(&users).Error
+	return users, err
 }
 
 func SetUserHashedPassword(id string, hashedPassword []byte) error {
 	err := db.Model(&model.User{}).Where("id = ?", id).Update("hashed_password", hashedPassword).Error
 	return HandleNotFound(err, "user")
+}
+
+func BindEmail(id string, email string) error {
+	err := db.Model(&model.User{}).Where("id = ?", id).Update("email", sql.NullString{
+		String: email,
+		Valid:  true,
+	}).Error
+	return HandleNotFound(err, "user")
+}
+
+func UnbindEmail(uid string) error {
+	return Transactional(func(tx *gorm.DB) error {
+		user := model.User{}
+		if err := tx.Where("id = ?", uid).First(&user).Error; err != nil {
+			return HandleNotFound(err, "user")
+		}
+		if user.Email.String == "" {
+			return errors.New("user has no email")
+		}
+		if user.RegisteredByEmail {
+			return errors.New("user must have one email")
+		}
+		return tx.Model(&model.User{}).Where("id = ?", uid).Update("email", sql.NullString{}).Error
+	})
 }

@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type SettingType string
 
 const (
@@ -9,11 +11,7 @@ const (
 	SettingTypeString  SettingType = "string"
 )
 
-type SettingGroup string
-
-func (s SettingGroup) String() string {
-	return string(s)
-}
+type SettingGroup = string
 
 const (
 	SettingGroupRoom     SettingGroup = "room"
@@ -23,11 +21,13 @@ const (
 	SettingGroupDatabase SettingGroup = "database"
 	SettingGroupServer   SettingGroup = "server"
 	SettingGroupOauth2   SettingGroup = "oauth2"
+	SettingGroupEmail    SettingGroup = "email"
 )
 
 type Setting struct {
-	Name  string `gorm:"primaryKey"`
-	Value string
-	Type  SettingType  `gorm:"not null;default:string"`
-	Group SettingGroup `gorm:"not null"`
+	Name      string `gorm:"primaryKey;type:varchar(256)"`
+	UpdatedAt time.Time
+	Value     string       `gorm:"not null;type:text"`
+	Type      SettingType  `gorm:"not null;default:string"`
+	Group     SettingGroup `gorm:"not null"`
 }

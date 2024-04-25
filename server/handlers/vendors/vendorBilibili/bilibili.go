@@ -2,6 +2,7 @@ package vendorBilibili
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -31,7 +32,7 @@ func (r *ParseReq) Decode(ctx *gin.Context) error {
 }
 
 func Parse(ctx *gin.Context) {
-	user := ctx.MustGet("user").(*op.User)
+	user := ctx.MustGet("user").(*op.UserEntry).Value()
 
 	req := ParseReq{}
 	if err := model.Decode(ctx, &req); err != nil {
@@ -39,7 +40,7 @@ func Parse(ctx *gin.Context) {
 		return
 	}
 
-	var cli = vendor.BilibiliClient(ctx.Query("backend"))
+	var cli = vendor.LoadBilibiliClient(ctx.Query("backend"))
 
 	resp, err := cli.Match(ctx, &bilibili.MatchReq{
 		Url: req.URL,
@@ -49,15 +50,16 @@ func Parse(ctx *gin.Context) {
 		return
 	}
 
+	// can be no login
 	var cookies []*http.Cookie
-	vendorInfo, err := db.GetBilibiliVendor(user.ID)
+	bucd, err := user.BilibiliCache().Get(ctx)
 	if err != nil {
 		if !errors.Is(err, db.ErrNotFound("vendor")) {
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, model.NewApiErrorResp(err))
 			return
 		}
 	} else {
-		cookies = utils.MapToHttpCookie(vendorInfo.Cookies)
+		cookies = bucd.Cookies
 	}
 
 	switch resp.Type {
@@ -118,8 +120,23 @@ func Parse(ctx *gin.Context) {
 			return
 		}
 		ctx.JSON(http.StatusOK, model.NewApiDataResp(resp))
+	case "live":
+		roomid, err := strconv.ParseUint(resp.Id, 10, 64)
+		if err != nil {
+			ctx.AbortWithStatusJSON(http.StatusInternalServerError, model.NewApiErrorResp(err))
+			return
+		}
+		resp, err := cli.ParseLivePage(ctx, &bilibili.ParseLivePageReq{
+			// Cookies: utils.HttpCookieToMap(cookies), // maybe no need login
+			RoomID: roomid,
+		})
+		if err != nil {
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, model.NewApiErrorResp(err))
+			return
+		}
+		ctx.JSON(http.StatusOK, model.NewApiDataResp(resp))
 	default:
-		ctx.AbortWithStatusJSON(http.StatusInternalServerError, model.NewApiErrorStringResp("unknown match type"))
+		ctx.AbortWithStatusJSON(http.StatusInternalServerError, model.NewApiErrorStringResp(fmt.Sprintf("unknown match type %s", resp.Type)))
 		return
 	}
 }

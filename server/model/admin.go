@@ -5,7 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	json "github.com/json-iterator/go"
+	"github.com/synctv-org/synctv/internal/model"
 	dbModel "github.com/synctv-org/synctv/internal/model"
+	"google.golang.org/grpc/connectivity"
 )
 
 var (
@@ -127,4 +129,64 @@ func (aur *AdminRoomPasswordReq) Validate() error {
 
 func (aur *AdminRoomPasswordReq) Decode(ctx *gin.Context) error {
 	return json.NewDecoder(ctx.Request.Body).Decode(aur)
+}
+
+type GetVendorBackendResp struct {
+	Info   *dbModel.VendorBackend `json:"info"`
+	Status connectivity.State     `json:"status"`
+}
+
+type AddVendorBackendReq model.VendorBackend
+
+func (avbr *AddVendorBackendReq) Validate() error {
+	if avbr.UsedBy.AlistBackendName != "" {
+		if !alnumPrintHanReg.MatchString(avbr.UsedBy.AlistBackendName) {
+			return errors.New("alist backend name has invalid char")
+		}
+	}
+	if avbr.UsedBy.BilibiliBackendName != "" {
+		if !alnumPrintHanReg.MatchString(avbr.UsedBy.BilibiliBackendName) {
+			return errors.New("bilibili backend name has invalid char")
+		}
+	}
+	if avbr.UsedBy.EmbyBackendName != "" {
+		if !alnumPrintHanReg.MatchString(avbr.UsedBy.EmbyBackendName) {
+			return errors.New("emby backend name has invalid char")
+		}
+	}
+	return avbr.Backend.Validate()
+}
+
+func (avbr *AddVendorBackendReq) Decode(ctx *gin.Context) error {
+	return json.NewDecoder(ctx.Request.Body).Decode(avbr)
+}
+
+type VendorBackendEndpointsReq struct {
+	Endpoints []string `json:"endpoints"`
+}
+
+func (dvbr *VendorBackendEndpointsReq) Validate() error {
+	if len(dvbr.Endpoints) == 0 {
+		return errors.New("endpoints is empty")
+	}
+	return nil
+}
+
+func (dvbr *VendorBackendEndpointsReq) Decode(ctx *gin.Context) error {
+	return json.NewDecoder(ctx.Request.Body).Decode(dvbr)
+}
+
+type SendTestEmailReq struct {
+	Email string `json:"email"`
+}
+
+func (ster *SendTestEmailReq) Validate() error {
+	if ster.Email != "" && !emailReg.MatchString(ster.Email) {
+		return errors.New("invalid email")
+	}
+	return nil
+}
+
+func (ster *SendTestEmailReq) Decode(ctx *gin.Context) error {
+	return json.NewDecoder(ctx.Request.Body).Decode(ster)
 }

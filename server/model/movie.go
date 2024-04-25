@@ -7,12 +7,12 @@ import (
 	json "github.com/json-iterator/go"
 	"github.com/synctv-org/synctv/internal/model"
 	"github.com/synctv-org/synctv/internal/op"
+	"github.com/synctv-org/synctv/utils"
 )
 
 var (
 	ErrUrlTooLong  = errors.New("url too long")
 	ErrEmptyName   = errors.New("empty name")
-	ErrNameTooLong = errors.New("name too long")
 	ErrTypeTooLong = errors.New("type too long")
 
 	ErrId = errors.New("id must be greater than 0")
@@ -33,8 +33,9 @@ func (p *PushMovieReq) Validate() error {
 
 	if p.Name == "" {
 		return ErrEmptyName
-	} else if len(p.Name) > 512 {
-		return ErrNameTooLong
+	} else if len(p.Name) > 256 {
+		// 从最后一个完整rune截断而不是返回错误
+		p.Name = utils.TruncateByRune(p.Name, 253) + "..."
 	}
 
 	if len(p.Type) > 32 {
@@ -144,13 +145,16 @@ func (s *SwapMovieReq) Validate() error {
 	return nil
 }
 
-type MoviesResp struct {
-	Id      string          `json:"id"`
-	Base    model.BaseMovie `json:"base"`
-	Creator string          `json:"creator"`
+type MovieResp struct {
+	Id        string          `json:"id"`
+	CreatedAt int64           `json:"createAt"`
+	Base      model.BaseMovie `json:"base"`
+	Creator   string          `json:"creator"`
+	CreatorId string          `json:"creatorId"`
 }
 
 type CurrentMovieResp struct {
-	Status op.Status  `json:"status"`
-	Movie  MoviesResp `json:"movie"`
+	Status   op.Status  `json:"status"`
+	Movie    *MovieResp `json:"movie"`
+	ExpireId uint64     `json:"expireId"`
 }

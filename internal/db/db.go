@@ -21,36 +21,15 @@ var (
 func Init(d *gorm.DB, t conf.DatabaseType) error {
 	db = d
 	dbType = t
-	return AutoMigrate(
-		new(model.Setting),
-		new(model.User),
-		new(model.UserProvider),
-		new(model.Room),
-		new(model.RoomUserRelation),
-		new(model.Movie),
-		new(model.BilibiliVendor),
-		new(model.AlistVendor),
-	)
-}
-
-func AutoMigrate(dst ...any) error {
-	var err error
-	switch conf.Conf.Database.Type {
-	case conf.DatabaseTypeMysql:
-		err = db.Set("gorm:table_options", "ENGINE=InnoDB CHARSET=utf8mb4").AutoMigrate(dst...)
-	case conf.DatabaseTypeSqlite3, conf.DatabaseTypePostgres:
-		err = db.AutoMigrate(dst...)
-	default:
-		log.Fatalf("unknown database type: %s", conf.Conf.Database.Type)
-	}
+	err := UpgradeDatabase()
 	if err != nil {
 		return err
 	}
-	err = initRootUser()
+	err = initGuestUser()
 	if err != nil {
 		return err
 	}
-	return upgradeDatabase()
+	return initRootUser()
 }
 
 func initRootUser() error {
@@ -61,6 +40,24 @@ func initRootUser() error {
 	}
 	u, err := CreateUser("root", "root", WithRole(model.RoleRoot))
 	log.Infof("init root user:\nid: %s\nusername: %s\npassword: %s", u.ID, u.Username, "root")
+	return err
+}
+
+const (
+	GuestUsername = "guest"
+	GuestUserID   = "00000000000000000000000000000001"
+)
+
+func initGuestUser() error {
+	user := model.User{
+		ID: GuestUserID,
+	}
+	err := db.First(&user).Error
+	if err == nil || !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	u, err := CreateUser("guest", utils.RandString(32), WithRole(model.RoleUser), WithID(GuestUserID))
+	log.Infof("init guest user:\nid: %s\nusername: %s", u.ID, u.Username)
 	return err
 }
 
@@ -112,8 +109,16 @@ func OrderByCreatedAtAsc(db *gorm.DB) *gorm.DB {
 	return db.Order("created_at asc")
 }
 
+func OrderByUsersCreatedAtAsc(db *gorm.DB) *gorm.DB {
+	return db.Order("users.created_at asc")
+}
+
 func OrderByCreatedAtDesc(db *gorm.DB) *gorm.DB {
 	return db.Order("created_at desc")
+}
+
+func OrderByUsersCreatedAtDesc(db *gorm.DB) *gorm.DB {
+	return db.Order("users.created_at desc")
 }
 
 func OrderByIDAsc(db *gorm.DB) *gorm.DB {
@@ -134,9 +139,9 @@ func WhereRoomID(roomID string) func(db *gorm.DB) *gorm.DB {
 	}
 }
 
-func PreloadRoomUserRelations(scopes ...func(*gorm.DB) *gorm.DB) func(db *gorm.DB) *gorm.DB {
+func PreloadRoomMembers(scopes ...func(*gorm.DB) *gorm.DB) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		return db.Preload("RoomUserRelations", func(db *gorm.DB) *gorm.DB {
+		return db.Preload("RoomMembers", func(db *gorm.DB) *gorm.DB {
 			return db.Scopes(scopes...)
 		})
 	}
@@ -188,6 +193,17 @@ func WhereRoomNameLikeOrCreatorInOrIDLike(name string, ids []string, id string) 
 			return db.Where("name ILIKE ? OR creator_id IN ? OR id ILIKE ?", utils.LIKE(name), ids, id)
 		default:
 			return db.Where("name LIKE ? OR creator_id IN ? OR id LIKE ?", utils.LIKE(name), ids, id)
+		}
+	}
+}
+
+func WhereRoomNameLikeOrCreatorInOrRoomsIDLike(name string, ids []string, id string) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		switch dbType {
+		case conf.DatabaseTypePostgres:
+			return db.Where("name ILIKE ? OR creator_id IN ? OR rooms.id ILIKE ?", utils.LIKE(name), ids, id)
+		default:
+			return db.Where("name LIKE ? OR creator_id IN ? OR rooms.id LIKE ?", utils.LIKE(name), ids, id)
 		}
 	}
 }
@@ -268,13 +284,7 @@ func WhereIDIn(ids []string) func(db *gorm.DB) *gorm.DB {
 
 func WhereRoomSettingWithoutHidden() func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		return db.Where("settings_hidden = ?", false)
-	}
-}
-
-func WhereRoomSettingHidden() func(db *gorm.DB) *gorm.DB {
-	return func(db *gorm.DB) *gorm.DB {
-		return db.Where("settings_hidden = ?", true)
+		return db.Where("hidden = ?", false)
 	}
 }
 
@@ -289,9 +299,26 @@ func WhereIDLike(id string) func(db *gorm.DB) *gorm.DB {
 	}
 }
 
-func WhereRoomUserStatus(status model.RoomUserStatus) func(db *gorm.DB) *gorm.DB {
+func WhereRoomsIDLike(id string) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		return db.Where("status = ?", status)
+		switch dbType {
+		case conf.DatabaseTypePostgres:
+			return db.Where("rooms.id ILIKE ?", utils.LIKE(id))
+		default:
+			return db.Where("rooms.id LIKE ?", utils.LIKE(id))
+		}
+	}
+}
+
+func WhereRoomMemberStatus(status model.RoomMemberStatus) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		return db.Where("room_members.status = ?", status)
+	}
+}
+
+func WhereRoomMemberRole(role model.RoomMemberRole) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		return db.Where("room_members.role = ?", role)
 	}
 }
 

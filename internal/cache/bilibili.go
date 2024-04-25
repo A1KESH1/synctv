@@ -17,6 +17,7 @@ import (
 	"github.com/synctv-org/vendors/api/bilibili"
 	"github.com/zencoder/go-dash/v3/mpd"
 	"github.com/zijiren233/gencontainer/refreshcache"
+	"github.com/zijiren233/go-uhc"
 )
 
 type BilibiliMpdCache struct {
@@ -27,26 +28,29 @@ type BilibiliMpdCache struct {
 
 type BilibiliSubtitleCache map[string]*struct {
 	Url string
-	Srt *refreshcache.RefreshCache[[]byte]
+	Srt *refreshcache.RefreshCache[[]byte, struct{}]
 }
 
-func NewBilibiliSharedMpdCacheInitFunc(movie *model.Movie) func(ctx context.Context, args ...any) (*BilibiliMpdCache, error) {
-	return func(ctx context.Context, args ...any) (*BilibiliMpdCache, error) {
+func NewBilibiliSharedMpdCacheInitFunc(movie *model.Movie) func(ctx context.Context, args ...*BilibiliUserCache) (*BilibiliMpdCache, error) {
+	return func(ctx context.Context, args ...*BilibiliUserCache) (*BilibiliMpdCache, error) {
 		return BilibiliSharedMpdCacheInitFunc(ctx, movie, args...)
 	}
 }
 
-func BilibiliSharedMpdCacheInitFunc(ctx context.Context, movie *model.Movie, args ...any) (*BilibiliMpdCache, error) {
+func BilibiliSharedMpdCacheInitFunc(ctx context.Context, movie *model.Movie, args ...*BilibiliUserCache) (*BilibiliMpdCache, error) {
+	if len(args) == 0 {
+		return nil, errors.New("no bilibili user cache data")
+	}
 	var cookies []*http.Cookie
-	vendorInfo, err := db.GetBilibiliVendor(movie.CreatorID)
+	vendorInfo, err := args[0].Get(ctx)
 	if err != nil {
 		if !errors.Is(err, db.ErrNotFound("vendor")) {
 			return nil, err
 		}
 	} else {
-		cookies = utils.MapToHttpCookie(vendorInfo.Cookies)
+		cookies = vendorInfo.Cookies
 	}
-	cli := vendor.BilibiliClient(movie.Base.VendorInfo.Backend)
+	cli := vendor.LoadBilibiliClient(movie.Base.VendorInfo.Backend)
 	var m, hevcM *mpd.MPD
 	biliInfo := movie.Base.VendorInfo.Bilibili
 	switch {
@@ -127,23 +131,26 @@ func BilibiliSharedMpdCacheInitFunc(ctx context.Context, movie *model.Movie, arg
 	}, nil
 }
 
-func NewBilibiliNoSharedMovieCacheInitFunc(movie *model.Movie) func(ctx context.Context, id string, args ...any) (string, error) {
-	return func(ctx context.Context, id string, args ...any) (string, error) {
-		return BilibiliNoSharedMovieCacheInitFunc(ctx, id, movie, args...)
+func NewBilibiliNoSharedMovieCacheInitFunc(movie *model.Movie) func(ctx context.Context, key string, args ...*BilibiliUserCache) (string, error) {
+	return func(ctx context.Context, key string, args ...*BilibiliUserCache) (string, error) {
+		return BilibiliNoSharedMovieCacheInitFunc(ctx, movie, args...)
 	}
 }
 
-func BilibiliNoSharedMovieCacheInitFunc(ctx context.Context, id string, movie *model.Movie, args ...any) (string, error) {
+func BilibiliNoSharedMovieCacheInitFunc(ctx context.Context, movie *model.Movie, args ...*BilibiliUserCache) (string, error) {
+	if len(args) == 0 {
+		return "", errors.New("no bilibili user cache data")
+	}
 	var cookies []*http.Cookie
-	vendorInfo, err := db.GetBilibiliVendor(id)
+	vendorInfo, err := args[0].Get(ctx)
 	if err != nil {
 		if !errors.Is(err, db.ErrNotFound("vendor")) {
 			return "", err
 		}
 	} else {
-		cookies = utils.MapToHttpCookie(vendorInfo.Cookies)
+		cookies = vendorInfo.Cookies
 	}
-	cli := vendor.BilibiliClient(movie.Base.VendorInfo.Backend)
+	cli := vendor.LoadBilibiliClient(movie.Base.VendorInfo.Backend)
 	var u string
 	biliInfo := movie.Base.VendorInfo.Bilibili
 	switch {
@@ -194,32 +201,34 @@ type bilibiliSubtitleResp struct {
 	} `json:"body"`
 }
 
-func NewBilibiliSubtitleCacheInitFunc(movie *model.Movie) func(ctx context.Context, args ...any) (BilibiliSubtitleCache, error) {
-	return func(ctx context.Context, args ...any) (BilibiliSubtitleCache, error) {
-		return BilibiliSubtitleCacheInitFunc(ctx, movie)
+func NewBilibiliSubtitleCacheInitFunc(movie *model.Movie) func(ctx context.Context, args ...*BilibiliUserCache) (BilibiliSubtitleCache, error) {
+	return func(ctx context.Context, args ...*BilibiliUserCache) (BilibiliSubtitleCache, error) {
+		return BilibiliSubtitleCacheInitFunc(ctx, movie, args...)
 	}
 }
 
-func BilibiliSubtitleCacheInitFunc(ctx context.Context, movie *model.Movie, args ...any) (BilibiliSubtitleCache, error) {
-	return initBilibiliSubtitleCache(ctx, movie, args...)
-}
+func BilibiliSubtitleCacheInitFunc(ctx context.Context, movie *model.Movie, args ...*BilibiliUserCache) (BilibiliSubtitleCache, error) {
+	if len(args) == 0 {
+		return nil, errors.New("no bilibili user cache data")
+	}
 
-func initBilibiliSubtitleCache(ctx context.Context, movie *model.Movie, args ...any) (BilibiliSubtitleCache, error) {
 	biliInfo := movie.Base.VendorInfo.Bilibili
 	if biliInfo.Bvid == "" || biliInfo.Cid == 0 {
 		return nil, errors.New("bvid or cid is empty")
 	}
 
+	// must login
 	var cookies []*http.Cookie
-	vendorInfo, err := db.GetBilibiliVendor(movie.CreatorID)
+	vendorInfo, err := args[0].Get(ctx)
 	if err != nil {
-		if !errors.Is(err, db.ErrNotFound("vendor")) {
-			return nil, err
+		if errors.Is(err, db.ErrNotFound("vendor")) {
+			return nil, nil
 		}
 	} else {
-		cookies = utils.MapToHttpCookie(vendorInfo.Cookies)
+		cookies = vendorInfo.Cookies
 	}
-	cli := vendor.BilibiliClient(movie.Base.VendorInfo.Backend)
+
+	cli := vendor.LoadBilibiliClient(movie.Base.VendorInfo.Backend)
 	resp, err := cli.GetSubtitles(ctx, &bilibili.GetSubtitlesReq{
 		Cookies: utils.HttpCookieToMap(cookies),
 		Bvid:    biliInfo.Bvid,
@@ -232,10 +241,10 @@ func initBilibiliSubtitleCache(ctx context.Context, movie *model.Movie, args ...
 	for k, v := range resp.Subtitles {
 		subtitleCache[k] = &struct {
 			Url string
-			Srt *refreshcache.RefreshCache[[]byte]
+			Srt *refreshcache.RefreshCache[[]byte, struct{}]
 		}{
 			Url: v,
-			Srt: refreshcache.NewRefreshCache[[]byte](func(ctx context.Context, args ...any) ([]byte, error) {
+			Srt: refreshcache.NewRefreshCache[[]byte](func(ctx context.Context, args ...struct{}) ([]byte, error) {
 				return translateBilibiliSubtitleToSrt(ctx, v)
 			}, 0),
 		}
@@ -275,7 +284,7 @@ func translateBilibiliSubtitleToSrt(ctx context.Context, url string) ([]byte, er
 	}
 	r.Header.Set("User-Agent", utils.UA)
 	r.Header.Set("Referer", "https://www.bilibili.com")
-	resp, err := http.DefaultClient.Do(r)
+	resp, err := uhc.Do(r)
 	if err != nil {
 		return nil, err
 	}
@@ -288,16 +297,80 @@ func translateBilibiliSubtitleToSrt(ctx context.Context, url string) ([]byte, er
 	return convertToSRT(&srt), nil
 }
 
+type BilibiliLiveCache struct {
+}
+
+func NewBilibiliLiveCacheInitFunc(movie *model.Movie) func(ctx context.Context, args ...struct{}) ([]byte, error) {
+	return func(ctx context.Context, args ...struct{}) ([]byte, error) {
+		return BilibiliLiveCacheInitFunc(ctx, movie, args...)
+	}
+}
+
+func genBilibiliLiveM3U8ListFile(urls []*bilibili.LiveStream) []byte {
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("#EXTM3U\n")
+	buf.WriteString("#EXT-X-VERSION:3\n")
+	for _, v := range urls {
+		if len(v.Urls) == 0 {
+			continue
+		}
+		buf.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,NAME=\"%s\"\n", 1920*1080*v.Quality, v.Desc))
+		buf.WriteString(v.Urls[0] + "\n")
+	}
+	return buf.Bytes()
+}
+
+func BilibiliLiveCacheInitFunc(ctx context.Context, movie *model.Movie, args ...struct{}) ([]byte, error) {
+	cli := vendor.LoadBilibiliClient(movie.Base.VendorInfo.Backend)
+	resp, err := cli.GetLiveStreams(ctx, &bilibili.GetLiveStreamsReq{
+		Cid: movie.Base.VendorInfo.Bilibili.Cid,
+		Hls: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return genBilibiliLiveM3U8ListFile(resp.LiveStreams), nil
+}
+
 type BilibiliMovieCache struct {
-	NoSharedMovie *MapCache[string]
-	SharedMpd     *refreshcache.RefreshCache[*BilibiliMpdCache]
-	Subtitle      *refreshcache.RefreshCache[BilibiliSubtitleCache]
+	NoSharedMovie *MapCache[string, *BilibiliUserCache]
+	SharedMpd     *refreshcache.RefreshCache[*BilibiliMpdCache, *BilibiliUserCache]
+	Subtitle      *refreshcache.RefreshCache[BilibiliSubtitleCache, *BilibiliUserCache]
+	Live          *refreshcache.RefreshCache[[]byte, struct{}]
 }
 
 func NewBilibiliMovieCache(movie *model.Movie) *BilibiliMovieCache {
 	return &BilibiliMovieCache{
-		NoSharedMovie: newMapCache[string](NewBilibiliNoSharedMovieCacheInitFunc(movie), time.Minute*115),
-		SharedMpd:     refreshcache.NewRefreshCache[*BilibiliMpdCache](NewBilibiliSharedMpdCacheInitFunc(movie), time.Minute*115),
-		Subtitle:      refreshcache.NewRefreshCache[BilibiliSubtitleCache](NewBilibiliSubtitleCacheInitFunc(movie), time.Minute*60),
+		NoSharedMovie: newMapCache(NewBilibiliNoSharedMovieCacheInitFunc(movie), time.Minute*60),
+		SharedMpd:     refreshcache.NewRefreshCache(NewBilibiliSharedMpdCacheInitFunc(movie), time.Minute*60),
+		Subtitle:      refreshcache.NewRefreshCache(NewBilibiliSubtitleCacheInitFunc(movie), 0),
+		Live:          refreshcache.NewRefreshCache(NewBilibiliLiveCacheInitFunc(movie), 0),
+	}
+}
+
+type BilibiliUserCache = refreshcache.RefreshCache[*BilibiliUserCacheData, struct{}]
+
+type BilibiliUserCacheData struct {
+	Cookies []*http.Cookie
+	Backend string
+}
+
+func NewBilibiliUserCache(userID string) *BilibiliUserCache {
+	f := BilibiliAuthorizationCacheWithUserIDInitFunc(userID)
+	return refreshcache.NewRefreshCache(func(ctx context.Context, args ...struct{}) (*BilibiliUserCacheData, error) {
+		return f(ctx)
+	}, 0)
+}
+
+func BilibiliAuthorizationCacheWithUserIDInitFunc(userID string) func(ctx context.Context, args ...struct{}) (*BilibiliUserCacheData, error) {
+	return func(ctx context.Context, args ...struct{}) (*BilibiliUserCacheData, error) {
+		v, err := db.GetBilibiliVendor(userID)
+		if err != nil {
+			return nil, err
+		}
+		return &BilibiliUserCacheData{
+			Cookies: utils.MapToHttpCookie(v.Cookies),
+			Backend: v.Backend,
+		}, nil
 	}
 }

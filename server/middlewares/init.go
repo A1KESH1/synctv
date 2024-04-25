@@ -12,7 +12,8 @@ import (
 func Init(e *gin.Engine) {
 	w := log.StandardLogger().Writer()
 	e.
-		Use(gin.LoggerWithWriter(w), gin.RecoveryWithWriter(w)).
+		Use(NewLog(log.StandardLogger())).
+		Use(gin.RecoveryWithWriter(w)).
 		Use(NewCors())
 	if conf.Conf.RateLimit.Enable {
 		d, err := time.ParseDuration(conf.Conf.RateLimit.Period)

@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/go-kratos/kratos/v2/log"
+	"github.com/joho/godotenv"
 	"github.com/mitchellh/go-homedir"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/synctv-org/synctv/cmd/admin"
 	"github.com/synctv-org/synctv/cmd/flags"
@@ -13,12 +16,38 @@ import (
 	"github.com/synctv-org/synctv/cmd/setting"
 	"github.com/synctv-org/synctv/cmd/user"
 	"github.com/synctv-org/synctv/internal/version"
+	"github.com/synctv-org/synctv/utils"
 )
 
 var RootCmd = &cobra.Command{
 	Use:   "synctv",
 	Short: "synctv",
 	Long:  `synctv https://github.com/synctv-org/synctv`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		s, err := utils.GetEnvFiles(flags.DataDir)
+		if err != nil {
+			logrus.Warnf("get env files error: %v", err)
+		}
+		if flags.Dev {
+			ss, err := utils.GetEnvFiles(".")
+			if err != nil {
+				logrus.Warnf("get env files error: %v", err)
+			}
+			s = append(s, ss...)
+		}
+		if len(s) != 0 {
+			if flags.EnvFileOverload {
+				log.Infof("overload env from: %v", s)
+				err = godotenv.Overload(s...)
+			} else {
+				log.Infof("load env from: %v", s)
+				err = godotenv.Load(s...)
+			}
+			if err != nil {
+				logrus.Fatalf("load env error: %v", err)
+			}
+		}
+	},
 }
 
 func Execute() {
@@ -34,12 +63,14 @@ func init() {
 	RootCmd.PersistentFlags().BoolVar(&flags.EnvNoPrefix, "env-no-prefix", false, "env no SYNCTV_ prefix")
 	RootCmd.PersistentFlags().BoolVar(&flags.SkipConfig, "skip-config", false, "skip config")
 	RootCmd.PersistentFlags().BoolVar(&flags.SkipEnv, "skip-env", false, "skip env")
+	RootCmd.PersistentFlags().BoolVar(&flags.EnvFileOverload, "env-file-overload", false, "env file overload")
 	RootCmd.PersistentFlags().StringVar(&flags.GitHubBaseURL, "github-base-url", "https://api.github.com/", "github api base url")
 	home, err := homedir.Dir()
 	if err != nil {
 		home = "~"
 	}
 	RootCmd.PersistentFlags().StringVar(&flags.DataDir, "data-dir", filepath.Join(home, ".synctv"), "data dir")
+	RootCmd.PersistentFlags().BoolVar(&flags.ForceAutoMigrate, "force-auto-migrate", version.Version == "dev", "force auto migrate")
 }
 
 func init() {

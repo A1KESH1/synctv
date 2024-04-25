@@ -9,7 +9,7 @@ import (
 
 var (
 	Settings      = make(map[string]Setting)
-	GroupSettings = make(map[model.SettingGroup][]Setting)
+	GroupSettings = make(map[model.SettingGroup]map[string]Setting)
 )
 
 type Setting interface {
@@ -17,6 +17,8 @@ type Setting interface {
 	Type() model.SettingType
 	Group() model.SettingGroup
 	Init(string) error
+	SetInitPriority(int)
+	InitPriority() int
 	String() string
 	SetString(string) error
 	DefaultString() string
@@ -29,13 +31,24 @@ func SetValue(name string, value any) error {
 	if !ok {
 		return fmt.Errorf("setting %s not found", name)
 	}
+	switch s.Type() {
+	case model.SettingTypeBool:
+		return s.(BoolSetting).Set(json.Wrap(value).ToBool())
+	case model.SettingTypeInt64:
+		return s.(Int64Setting).Set(json.Wrap(value).ToInt64())
+	case model.SettingTypeFloat64:
+		return s.(Float64Setting).Set(json.Wrap(value).ToFloat64())
+	case model.SettingTypeString:
+		return s.(StringSetting).Set(json.Wrap(value).ToString())
+	}
 	return s.SetString(json.Wrap(value).ToString())
 }
 
 type setting struct {
-	name        string
-	settingType model.SettingType
-	group       model.SettingGroup
+	name         string
+	settingType  model.SettingType
+	group        model.SettingGroup
+	initPriority int
 }
 
 func (d *setting) Name() string {
@@ -48,4 +61,8 @@ func (d *setting) Type() model.SettingType {
 
 func (d *setting) Group() model.SettingGroup {
 	return d.group
+}
+
+func (d *setting) InitPriority() int {
+	return d.initPriority
 }

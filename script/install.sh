@@ -10,6 +10,8 @@ function Help() {
     echo "-h: help"
     echo "-v: install version (default: latest)"
     echo "-p: github proxy (default: https://mirror.ghproxy.com/)"
+    echo "-a: microarchitecture (no default value)"
+    echo "  example: -a v2"
 }
 
 function Init() {
@@ -38,6 +40,9 @@ function ParseArgs() {
         p)
             GH_PROXY="$OPTARG"
             ;;
+        a)
+            Microarchitecture="$OPTARG"
+            ;;
         ?)
             echo "unkonw argument"
             exit 1
@@ -51,6 +56,11 @@ function FixArgs() {
     if [ "${GH_PROXY: -1}" != "/" ]; then
         GH_PROXY="$GH_PROXY/"
     fi
+    # 如果VERSION不是以v开头且不是latest、dev，则补上v
+    if [[ "$VERSION" != v* ]] && [ "$VERSION" != "latest" ] && [ "$VERSION" != "dev" ]; then
+        VERSION="v$VERSION"
+    fi
+
 }
 
 function InitOS() {
@@ -58,9 +68,9 @@ function InitOS() {
     Linux)
         OS='linux'
         ;;
-    Darwin)
-        OS='darwin'
-        ;;
+    # Darwin)
+    #     OS='darwin'
+    #     ;;
     *)
         echo "OS: ${OS} not supported"
         exit 2
@@ -68,10 +78,29 @@ function InitOS() {
     esac
 }
 
+# Ref: https://dl.xanmod.org/check_x86-64_psabi.sh
+# https://go.dev/wiki/MinimumRequirements#amd64
+AMD64_MICRO_DETECTION_SCRIPT=$(
+    cat <<EOF
+BEGIN {
+    while (!/flags/) if (getline < "/proc/cpuinfo" != 1) exit 1
+    if (/lm/&&/cmov/&&/cx8/&&/fpu/&&/fxsr/&&/mmx/&&/syscall/&&/sse2/) level = 1
+    if (level == 1 && /cx16/&&/lahf/&&/popcnt/&&/sse4_1/&&/sse4_2/&&/ssse3/) level = 2
+    if (level == 2 && /avx/&&/avx2/&&/bmi1/&&/bmi2/&&/f16c/&&/fma/&&/abm/&&/movbe/&&/xsave/) level = 3
+    if (level == 3 && /avx512f/&&/avx512bw/&&/avx512cd/&&/avx512dq/&&/avx512vl/) level = 4
+    if (level > 0) { print "v" level; exit 0 }
+    exit 1
+}
+EOF
+)
+
 function InitArch() {
     case "$(uname -m)" in
     x86_64 | amd64)
         ARCH='amd64'
+        if [ ! "$Microarchitecture" ]; then
+            Microarchitecture="$(awk "$AMD64_MICRO_DETECTION_SCRIPT")"
+        fi
         ;;
     i?86 | x86)
         ARCH='386'
@@ -134,10 +163,13 @@ function Download() {
 }
 
 function DownloadURL() {
+    if [ -n "$Microarchitecture" ] && [ "${Microarchitecture:0:1}" != "-" ]; then
+        Microarchitecture="-$Microarchitecture"
+    fi
     if [[ $1 == v* ]]; then
-        echo "${GH_PROXY}https://github.com/synctv-org/synctv/releases/download/$1/synctv-${OS}-${ARCH}"
+        echo "${GH_PROXY}https://github.com/synctv-org/synctv/releases/download/$1/synctv-${OS}-${ARCH}${Microarchitecture}"
     else
-        echo "${GH_PROXY}https://github.com/synctv-org/synctv/releases/$1/download/synctv-${OS}-${ARCH}"
+        echo "${GH_PROXY}https://github.com/synctv-org/synctv/releases/$1/download/synctv-${OS}-${ARCH}${Microarchitecture}"
     fi
 }
 

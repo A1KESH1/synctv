@@ -8,6 +8,8 @@ var (
 
 	SkipEnv bool
 
+	EnvFileOverload bool
+
 	SkipConfig bool
 
 	EnvNoPrefix bool
@@ -15,4 +17,6 @@ var (
 	GitHubBaseURL string
 
 	DataDir string
+
+	ForceAutoMigrate bool
 )

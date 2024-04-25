@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -14,8 +15,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/synctv-org/synctv/cmd/flags"
+	"github.com/zijiren233/go-colorable"
 	"github.com/zijiren233/stream"
 	yamlcomment "github.com/zijiren233/yaml-comment"
 	"gopkg.in/yaml.v3"
@@ -307,7 +310,10 @@ func LIKE(s string) string {
 }
 
 func SortUUID() string {
-	src := uuid.New()
+	return SortUUIDWithUUID(uuid.New())
+}
+
+func SortUUIDWithUUID(src uuid.UUID) string {
 	dst := make([]byte, 32)
 	hex.Encode(dst, src[:])
 	return stream.BytesToString(dst)
@@ -341,4 +347,71 @@ func GetUrlExtension(u string) string {
 		return ""
 	}
 	return strings.TrimLeft(filepath.Ext(p.Path), ".")
+}
+
+var (
+	needColor     bool
+	needColorOnce sync.Once
+)
+
+func ForceColor() bool {
+	needColorOnce.Do(func() {
+		if flags.DisableLogColor {
+			needColor = false
+			return
+		}
+		needColor = colorable.IsTerminal(os.Stdout.Fd())
+	})
+	return needColor
+}
+
+func GetPageAndMax(ctx *gin.Context) (page int, max int, err error) {
+	max, err = strconv.Atoi(ctx.DefaultQuery("max", "10"))
+	if err != nil {
+		return 0, 0, errors.New("max must be a number")
+	}
+	page, err = strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	if err != nil {
+		return 0, 0, errors.New("page must be a number")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if max <= 0 {
+		max = 10
+	} else if max > 100 {
+		max = 100
+	}
+	return
+}
+
+func TruncateByRune(s string, length int) string {
+	if len(s) <= length {
+		return s
+	}
+	total := 0
+	for _, v := range s {
+		total += len(string(v))
+		if total > length {
+			return s[:total-len(string(v))]
+		}
+	}
+	panic("truncate by rune error")
+}
+
+func GetEnvFiles(root string) ([]string, error) {
+	var envs []string
+
+	files, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if !file.IsDir() && strings.HasPrefix(file.Name(), ".env") {
+			envs = append(envs, file.Name())
+		}
+	}
+
+	return envs, nil
 }

@@ -3,6 +3,7 @@ package op
 import (
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"net/url"
 	"sync/atomic"
 	"time"
@@ -22,63 +23,111 @@ import (
 )
 
 type Movie struct {
-	Movie         model.Movie
+	*model.Movie
 	channel       atomic.Pointer[rtmps.Channel]
-	bilibiliCache atomic.Pointer[cache.BilibiliMovieCache]
 	alistCache    atomic.Pointer[cache.AlistMovieCache]
+	bilibiliCache atomic.Pointer[cache.BilibiliMovieCache]
+	embyCache     atomic.Pointer[cache.EmbyMovieCache]
 }
 
-func (m *Movie) BilibiliCache() (*cache.BilibiliMovieCache, error) {
-	c := m.bilibiliCache.Load()
-	if c == nil {
-		c = cache.NewBilibiliMovieCache(&m.Movie)
-		if !m.bilibiliCache.CompareAndSwap(nil, c) {
-			return m.BilibiliCache()
+func (m *Movie) ExpireId() uint64 {
+	switch {
+	case m.Movie.Base.VendorInfo.Vendor == model.VendorAlist:
+		amcd, _ := m.AlistCache().Raw()
+		if amcd != nil && amcd.Ali != nil {
+			return uint64(m.AlistCache().Last())
 		}
+		fallthrough
+	default:
+		return uint64(crc32.ChecksumIEEE([]byte(m.Movie.ID)))
 	}
-	return c, nil
 }
 
-func (m *Movie) AlistCache() (*cache.AlistMovieCache, error) {
+func (m *Movie) CheckExpired(expireId uint64) bool {
+	switch {
+	case m.Movie.Base.VendorInfo.Vendor == model.VendorAlist:
+		amcd, _ := m.AlistCache().Raw()
+		if amcd != nil && amcd.Ali != nil {
+			return time.Now().UnixNano()-int64(expireId) > m.AlistCache().MaxAge()
+		}
+		fallthrough
+	default:
+		return expireId != m.ExpireId()
+	}
+}
+
+func (m *Movie) ClearCache() {
+	m.alistCache.Store(nil)
+
+	bmc := m.bilibiliCache.Swap(nil)
+	if bmc != nil {
+		bmc.NoSharedMovie.Clear()
+	}
+
+	m.embyCache.Store(nil)
+}
+
+func (m *Movie) AlistCache() *cache.AlistMovieCache {
 	c := m.alistCache.Load()
 	if c == nil {
-		u, err := LoadOrInitUserByID(m.Movie.CreatorID)
-		if err != nil {
-			return nil, err
-		}
-		c = cache.NewAlistMovieCache(u.AlistCache(), &m.Movie)
+		c = cache.NewAlistMovieCache(m.Movie)
 		if !m.alistCache.CompareAndSwap(nil, c) {
 			return m.AlistCache()
 		}
 	}
-	return c, nil
+	return c
+}
+
+func (m *Movie) BilibiliCache() *cache.BilibiliMovieCache {
+	c := m.bilibiliCache.Load()
+	if c == nil {
+		c = cache.NewBilibiliMovieCache(m.Movie)
+		if !m.bilibiliCache.CompareAndSwap(nil, c) {
+			return m.BilibiliCache()
+		}
+	}
+	return c
+}
+
+func (m *Movie) EmbyCache() *cache.EmbyMovieCache {
+	c := m.embyCache.Load()
+	if c == nil {
+		c = cache.NewEmbyMovieCache(m.Movie)
+		if !m.embyCache.CompareAndSwap(nil, c) {
+			return m.EmbyCache()
+		}
+	}
+	return c
 }
 
 func (m *Movie) Channel() (*rtmps.Channel, error) {
-	return m.channel.Load(), m.initChannel()
+	err := m.initChannel()
+	if err != nil {
+		return nil, err
+	}
+	return m.channel.Load(), nil
 }
 
 func genTsName() string {
 	return utils.SortUUID()
 }
 
-func (m *Movie) compareAndSwapInitChannel() (*rtmps.Channel, bool) {
-	if m.channel.Load() == nil {
-		c := rtmps.NewChannel()
+func (m *Movie) compareAndSwapInitChannel() *rtmps.Channel {
+	c := m.channel.Load()
+	if c == nil {
+		c = rtmps.NewChannel()
 		if !m.channel.CompareAndSwap(nil, c) {
-			return nil, false
+			return m.compareAndSwapInitChannel()
 		}
-		return c, true
+		c.InitHlsPlayer(hls.WithGenTsNameFunc(genTsName))
 	}
-	return nil, false
+	return c
 }
 
 func (m *Movie) initChannel() error {
 	switch {
 	case m.Movie.Base.Live && m.Movie.Base.RtmpSource:
-		if c, ok := m.compareAndSwapInitChannel(); ok {
-			return c.InitHlsPlayer(hls.WithGenTsNameFunc(genTsName))
-		}
+		m.compareAndSwapInitChannel()
 	case m.Movie.Base.Live && m.Movie.Base.Proxy:
 		u, err := url.Parse(m.Movie.Base.Url)
 		if err != nil {
@@ -86,10 +135,7 @@ func (m *Movie) initChannel() error {
 		}
 		switch u.Scheme {
 		case "rtmp":
-			c, ok := m.compareAndSwapInitChannel()
-			if !ok {
-				return nil
-			}
+			c := m.compareAndSwapInitChannel()
 			err = c.InitHlsPlayer(hls.WithGenTsNameFunc(genTsName))
 			if err != nil {
 				return err
@@ -112,11 +158,11 @@ func (m *Movie) initChannel() error {
 				}
 			}()
 		case "http", "https":
-			c, ok := m.compareAndSwapInitChannel()
-			if !ok {
-				return nil
+			c := m.compareAndSwapInitChannel()
+			err := c.InitHlsPlayer(hls.WithGenTsNameFunc(genTsName))
+			if err != nil {
+				return err
 			}
-			c.InitHlsPlayer(hls.WithGenTsNameFunc(genTsName))
 			go func() {
 				for {
 					if c.Closed() {
@@ -220,13 +266,14 @@ func (movie *Movie) validateVendorMovie() error {
 		return movie.Movie.Base.VendorInfo.Bilibili.Validate()
 
 	case model.VendorAlist:
-		// return movie.Movie.Base.VendorInfo.Alist.Validate()
+		return movie.Movie.Base.VendorInfo.Alist.Validate()
+
+	case model.VendorEmby:
+		return movie.Movie.Base.VendorInfo.Emby.Validate()
 
 	default:
-		return fmt.Errorf("vendor not support")
+		return fmt.Errorf("vendor not implement validate")
 	}
-
-	return nil
 }
 
 func (m *Movie) Terminate() error {
@@ -237,14 +284,11 @@ func (m *Movie) Terminate() error {
 			return err
 		}
 	}
-	bmc := m.bilibiliCache.Swap(nil)
-	if bmc != nil {
-		bmc.NoSharedMovie.Clear()
-	}
 	return nil
 }
 
 func (m *Movie) Update(movie *model.BaseMovie) error {
 	m.Movie.Base = *movie
+	m.ClearCache()
 	return m.Terminate()
 }

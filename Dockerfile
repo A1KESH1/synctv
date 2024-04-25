@@ -1,31 +1,41 @@
-From alpine:latest as builder
+FROM alpine:latest as builder
 
-ARG VERSION=v0.0.0
+ARG VERSION=dev
+
+ARG SKIP_INIT_WEB
+
+ENV SKIP_INIT_WEB=${SKIP_INIT_WEB}
 
 WORKDIR /synctv
 
 COPY ./ ./
 
-RUN apk add --no-cache bash curl gcc git go musl-dev && \
-    bash script/build.sh -P -v ${VERSION}
+RUN apk add --no-cache bash curl git go g++
 
-From alpine:latest
+RUN bash script/build.sh -Mv ${VERSION} \
+    -f 'gcc -static' -F 'g++ -static' \
+    -m '-a -v'
+
+FROM alpine:latest
 
 ENV PUID=0 PGID=0 UMASK=022
 
 COPY --from=builder /synctv/build/synctv /usr/local/bin/synctv
 
+RUN apk add --no-cache bash ca-certificates su-exec tzdata && \
+    rm -rf /var/cache/apk/*
+
 COPY script/entrypoint.sh /entrypoint.sh
 
-RUN apk add --no-cache bash ca-certificates su-exec tzdata && \
-    rm -rf /var/cache/apk/* && \
-    chmod +x /entrypoint.sh && \
-    mkdir -p ~/.synctv
+RUN chmod +x /entrypoint.sh && \
+    mkdir -p /root/.synctv
 
-WORKDIR ~/.synctv
+WORKDIR /root/.synctv
 
-EXPOSE 8080/tcp 8080/udp
+EXPOSE 8080/tcp
 
-VOLUME [ "~/.synctv" ]
+VOLUME [ "/root/.synctv" ]
 
-CMD [ "/entrypoint.sh" ]
+ENTRYPOINT [ "/entrypoint.sh" ]
+
+CMD [ "server" ]

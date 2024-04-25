@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/synctv-org/synctv/utils"
@@ -9,12 +10,12 @@ import (
 )
 
 type Movie struct {
-	ID        string    `gorm:"primaryKey;type:varchar(32)" json:"id"`
+	ID        string    `gorm:"primaryKey;type:char(32)" json:"id"`
 	CreatedAt time.Time `json:"-"`
 	UpdatedAt time.Time `json:"-"`
 	Position  uint      `gorm:"not null" json:"-"`
-	RoomID    string    `gorm:"not null;index" json:"-"`
-	CreatorID string    `gorm:"index" json:"creatorId"`
+	RoomID    string    `gorm:"not null;index;type:char(32)" json:"-"`
+	CreatorID string    `gorm:"index;type:char(32)" json:"creatorId"`
 	Base      BaseMovie `gorm:"embedded;embeddedPrefix:base_" json:"base"`
 }
 
@@ -26,14 +27,14 @@ func (m *Movie) BeforeCreate(tx *gorm.DB) error {
 }
 
 type BaseMovie struct {
-	Url        string               `json:"url"`
-	Name       string               `gorm:"not null" json:"name"`
+	Url        string               `gorm:"type:varchar(8192)" json:"url"`
+	Name       string               `gorm:"not null;type:varchar(256)" json:"name"`
 	Live       bool                 `json:"live"`
 	Proxy      bool                 `json:"proxy"`
 	RtmpSource bool                 `json:"rtmpSource"`
 	Type       string               `json:"type"`
-	Headers    map[string]string    `gorm:"serializer:fastjson" json:"headers"`
-	Subtitles  map[string]*Subtitle `gorm:"serializer:fastjson" json:"subtitles"`
+	Headers    map[string]string    `gorm:"serializer:fastjson;type:text" json:"headers"`
+	Subtitles  map[string]*Subtitle `gorm:"serializer:fastjson;type:text" json:"subtitles"`
 	VendorInfo VendorInfo           `gorm:"embedded;embeddedPrefix:vendor_info_" json:"vendorInfo,omitempty"`
 }
 
@@ -47,14 +48,15 @@ type VendorName = string
 const (
 	VendorBilibili VendorName = "bilibili"
 	VendorAlist    VendorName = "alist"
+	VendorEmby     VendorName = "emby"
 )
 
 type VendorInfo struct {
-	Vendor   VendorName             `json:"vendor"`
-	Backend  string                 `json:"backend"`
-	Shared   bool                   `gorm:"not null;default:false" json:"shared"`
+	Vendor   VendorName             `gorm:"type:varchar(32)" json:"vendor"`
+	Backend  string                 `gorm:"type:varchar(64)" json:"backend"`
 	Bilibili *BilibiliStreamingInfo `gorm:"embedded;embeddedPrefix:bilibili_" json:"bilibili,omitempty"`
 	Alist    *AlistStreamingInfo    `gorm:"embedded;embeddedPrefix:alist_" json:"alist,omitempty"`
+	Emby     *EmbyStreamingInfo     `gorm:"embedded;embeddedPrefix:emby_" json:"emby,omitempty"`
 }
 
 type BilibiliStreamingInfo struct {
@@ -62,6 +64,7 @@ type BilibiliStreamingInfo struct {
 	Cid     uint64 `json:"cid,omitempty"`
 	Epid    uint64 `json:"epid,omitempty"`
 	Quality uint64 `json:"quality,omitempty"`
+	Shared  bool   `json:"shared,omitempty"`
 }
 
 func (b *BilibiliStreamingInfo) Validate() error {
@@ -75,6 +78,8 @@ func (b *BilibiliStreamingInfo) Validate() error {
 		if b.Cid == 0 {
 			return fmt.Errorf("cid is empty")
 		}
+	case b.Cid != 0: // live
+		return nil
 	default:
 		return fmt.Errorf("bvid or epid is empty")
 	}
@@ -83,8 +88,24 @@ func (b *BilibiliStreamingInfo) Validate() error {
 }
 
 type AlistStreamingInfo struct {
-	Path     string `json:"path,omitempty"`
-	Password string `json:"password,omitempty"`
+	// {/}serverId/Path
+	Path     string `gorm:"type:varchar(4096)" json:"path,omitempty"`
+	Password string `gorm:"type:varchar(256)" json:"password,omitempty"`
+}
+
+func GetAlistServerIdFromPath(path string) (serverID string, filePath string, err error) {
+	before, after, found := strings.Cut(strings.TrimLeft(path, "/"), "/")
+	if !found {
+		return "", path, fmt.Errorf("path is invalid")
+	}
+	return before, after, nil
+}
+
+func (a *AlistStreamingInfo) Validate() error {
+	if a.Path == "" {
+		return fmt.Errorf("path is empty")
+	}
+	return nil
 }
 
 func (a *AlistStreamingInfo) BeforeSave(tx *gorm.DB) error {
@@ -98,13 +119,36 @@ func (a *AlistStreamingInfo) BeforeSave(tx *gorm.DB) error {
 	return nil
 }
 
-func (a *AlistStreamingInfo) AfterFind(tx *gorm.DB) error {
+func (a *AlistStreamingInfo) AfterSave(tx *gorm.DB) error {
 	if a.Password != "" {
 		b, err := utils.DecryptoFromBase64(a.Password, utils.GenCryptoKey(a.Path))
 		if err != nil {
 			return err
 		}
 		a.Password = string(b)
+	}
+	return nil
+}
+
+func (a *AlistStreamingInfo) AfterFind(tx *gorm.DB) error {
+	return a.AfterSave(tx)
+}
+
+type EmbyStreamingInfo struct {
+	// {/}serverId/ItemId
+	Path string `gorm:"type:varchar(52)" json:"path,omitempty"`
+}
+
+func GetEmbyServerIdFromPath(path string) (serverID string, filePath string, err error) {
+	if s := strings.Split(strings.TrimLeft(path, "/"), "/"); len(s) == 2 {
+		return s[0], s[1], nil
+	}
+	return "", path, fmt.Errorf("path is invalid")
+}
+
+func (e *EmbyStreamingInfo) Validate() error {
+	if e.Path == "" {
+		return fmt.Errorf("path is empty")
 	}
 	return nil
 }

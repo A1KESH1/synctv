@@ -12,7 +12,7 @@ var ShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "show admin",
 	Long:  `show admin`,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(cmd *cobra.Command, args []string) error {
 		return bootstrap.New(bootstrap.WithContext(cmd.Context())).Add(
 			bootstrap.InitDiscardLog,
 			bootstrap.InitConfig,
@@ -20,7 +20,10 @@ var ShowCmd = &cobra.Command{
 		).Run()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		admins := db.GetAdmins()
+		admins, err := db.GetAdmins()
+		if err != nil {
+			fmt.Printf("get admins failed: %s\n", err.Error())
+		}
 		for _, admin := range admins {
 			fmt.Printf("id: %s\tusername: %s\n", admin.ID, admin.Username)
 		}
